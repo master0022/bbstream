@@ -1,0 +1,397 @@
+/* ---- LIVE pill on voice channel rows (content comes from generated per-user rules) ---- */
+[data-bbstream-uid]::after {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--status-danger, #da373c);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 16px;
+    vertical-align: 1px;
+    cursor: pointer;
+}
+
+/* ---- inline viewer (takes over the main content area, like Discord's call view) ---- */
+.vc-bbs-viewer {
+    position: fixed;
+    z-index: 50;
+    display: flex;
+    overflow: hidden;
+    background: #000;
+    color: #fff;
+    user-select: none;
+    transition: left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease, border-radius 0.18s ease;
+}
+
+.vc-bbs-viewer:fullscreen {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+}
+
+.vc-bbs-viewer video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+}
+
+.vc-bbs-pip {
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 50%), 0 0 0 1px rgb(255 255 255 / 6%);
+    cursor: pointer;
+}
+
+.vc-bbs-top,
+.vc-bbs-bottom {
+    position: absolute;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.vc-bbs-top {
+    top: 0;
+    padding: 12px 12px 28px 16px;
+    background: linear-gradient(rgb(0 0 0 / 65%), transparent);
+}
+
+.vc-bbs-pip .vc-bbs-top {
+    padding: 8px 6px 20px 10px;
+}
+
+.vc-bbs-bottom {
+    bottom: 0;
+    justify-content: center;
+    padding: 32px 16px 16px;
+    gap: 12px;
+    background: linear-gradient(transparent, rgb(0 0 0 / 70%));
+}
+
+.vc-bbs-viewer:hover .vc-bbs-top,
+.vc-bbs-viewer:hover .vc-bbs-bottom,
+.vc-bbs-viewer:focus-within .vc-bbs-bottom {
+    opacity: 1;
+}
+
+.vc-bbs-live {
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--status-danger, #da373c);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 18px;
+    letter-spacing: 0.02em;
+}
+
+.vc-bbs-name {
+    overflow: hidden;
+    font-size: 16px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+
+.vc-bbs-pip .vc-bbs-name {
+    font-size: 14px;
+}
+
+.vc-bbs-spacer {
+    flex: 1;
+}
+
+.vc-bbs-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 12px;
+    background: rgb(0 0 0 / 55%);
+    backdrop-filter: blur(8px);
+}
+
+.vc-bbs-btn {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+}
+
+.vc-bbs-btn:hover {
+    background: rgb(255 255 255 / 14%);
+}
+
+.vc-bbs-pip .vc-bbs-btn {
+    width: 32px;
+    height: 32px;
+}
+
+.vc-bbs-volume {
+    width: 96px;
+    margin: 0 8px 0 2px;
+    accent-color: #fff;
+    cursor: pointer;
+}
+
+.vc-bbs-stop {
+    height: 40px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--button-danger-background, #da373c);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.vc-bbs-stop:hover {
+    background: var(--button-danger-background-hover, #a12d2f);
+}
+
+.vc-bbs-status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: center;
+    justify-content: center;
+    background: var(--background-base-lowest, #111214);
+    color: var(--text-default, #dbdee1);
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.vc-bbs-pip .vc-bbs-status {
+    gap: 10px;
+    font-size: 13px;
+}
+
+.vc-bbs-status-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+}
+
+.vc-bbs-pip .vc-bbs-status-avatar {
+    width: 48px;
+    height: 48px;
+}
+
+.vc-bbs-status-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.vc-bbs-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgb(255 255 255 / 20%);
+    border-top-color: currentcolor;
+    border-radius: 50%;
+    animation: vc-bbs-spin 0.9s linear infinite;
+}
+
+@keyframes vc-bbs-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ---- Go Live picker ---- */
+.vc-bbs-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding-bottom: 4px;
+}
+
+.vc-bbs-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--background-base-lower, #1e1f22);
+    align-self: flex-start;
+}
+
+.vc-bbs-tab {
+    padding: 6px 14px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted, #949ba4);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.vc-bbs-tab:hover {
+    color: var(--interactive-hover, #dbdee1);
+}
+
+.vc-bbs-tab-on,
+.vc-bbs-tab-on:hover {
+    background: var(--background-mod-normal, #3f4248);
+    color: var(--interactive-active, #fff);
+}
+
+.vc-bbs-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    max-height: 46vh;
+    padding: 2px;
+    overflow-y: auto;
+}
+
+.vc-bbs-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--background-base-lower, #1e1f22);
+    color: var(--text-default, #dbdee1);
+    text-align: left;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 2px transparent;
+    transition: box-shadow 0.12s ease, background 0.12s ease;
+}
+
+.vc-bbs-card:hover {
+    background: var(--background-mod-subtle, #2e3035);
+}
+
+.vc-bbs-card-on,
+.vc-bbs-card-on:hover {
+    box-shadow: inset 0 0 0 2px var(--brand-500, #5865f2);
+}
+
+.vc-bbs-thumb {
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 4px;
+    background: #000;
+}
+
+.vc-bbs-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.vc-bbs-card-label {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    min-height: 18px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.vc-bbs-card-label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vc-bbs-card-icon {
+    width: 16px;
+    height: 16px;
+    flex: none;
+}
+
+.vc-bbs-skeleton {
+    cursor: default;
+}
+
+.vc-bbs-skeleton .vc-bbs-thumb,
+.vc-bbs-skeleton .vc-bbs-card-label {
+    border-radius: 4px;
+    background: var(--background-mod-subtle, #2e3035);
+    animation: vc-bbs-pulse 1.2s ease-in-out infinite;
+}
+
+.vc-bbs-skeleton .vc-bbs-card-label {
+    width: 60%;
+}
+
+@keyframes vc-bbs-pulse {
+    50% { opacity: 0.5; }
+}
+
+.vc-bbs-empty {
+    grid-column: 1 / -1;
+    padding: 32px 0;
+    color: var(--text-muted, #949ba4);
+    text-align: center;
+}
+
+.vc-bbs-quality {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+.vc-bbs-quality-label {
+    margin-bottom: 8px;
+    color: var(--header-secondary, #b5bac1);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.vc-bbs-chips {
+    display: flex;
+    gap: 8px;
+}
+
+.vc-bbs-chip {
+    padding: 6px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--background-base-lower, #1e1f22);
+    color: var(--text-default, #dbdee1);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px var(--border-subtle, rgb(255 255 255 / 8%));
+}
+
+.vc-bbs-chip:hover {
+    background: var(--background-mod-subtle, #2e3035);
+}
+
+.vc-bbs-chip-on,
+.vc-bbs-chip-on:hover {
+    background: var(--brand-500, #5865f2);
+    color: #fff;
+    box-shadow: none;
+}
+
+.vc-bbs-error {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgb(218 55 60 / 15%);
+    color: var(--text-feedback-critical, #f57976);
+    font-size: 14px;
+}
