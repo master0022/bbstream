@@ -224,11 +224,15 @@ namespace BBStreamSetup
 
         static void StartDiscord(IEnumerable<string> discordRoots)
         {
+            // Discord.exe itself rather than Update.exe --processStart: Windows may treat a program
+            // named "Update" as an installer and ask for admin. Discord checks for updates on its own.
             foreach (var root in discordRoots)
             {
-                var update = Path.Combine(root, "Update.exe");
-                if (!File.Exists(update)) continue;
-                Process.Start(new ProcessStartInfo(update, "--processStart " + Path.GetFileName(root) + ".exe") { UseShellExecute = false, WorkingDirectory = root });
+                var app = LatestApp(root);
+                var exe = app == null ? null : Path.Combine(app, Path.GetFileName(root) + ".exe");
+                if (exe == null || !File.Exists(exe)) continue;
+                try { Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = app }); }
+                catch (Win32Exception) { }
             }
         }
 

@@ -51,45 +51,51 @@ namespace BBStreamSetup
         readonly LinkLabel _uninstall = new LinkLabel();
         bool _done;
 
+        readonly float _scale;
+        Point Pt(int x, int y) => new Point((int)(x * _scale), (int)(y * _scale));
+        Size Px(int w, int h) => new Size((int)(w * _scale), (int)(h * _scale));
+
         public SetupForm()
         {
+            using (var screen = Graphics.FromHwnd(IntPtr.Zero)) _scale = screen.DpiX / 96f;
             Text = "BBStream";
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
-            AutoScaleMode = AutoScaleMode.Dpi;
-            AutoScaleDimensions = new SizeF(96, 96);
-            ClientSize = new Size(440, 260);
+            // Laid out by hand in 96-dpi units and scaled here; fonts (in points) already follow the DPI.
+            AutoScaleMode = AutoScaleMode.None;
+            ClientSize = Px(440, 290);
             BackColor = Background;
             Font = new Font("Segoe UI", 9.75f);
 
-            var title = new Label { Text = "BBStream", ForeColor = Text1, Font = new Font("Segoe UI Semibold", 20f), AutoSize = true, Location = new Point(28, 22) };
-            var version = new Label { Text = "v" + typeof(SetupForm).Assembly.GetName().Version.ToString(2), ForeColor = Text2, AutoSize = true, Location = new Point(170, 36) };
+            var title = new Label { Text = "BBStream", ForeColor = Text1, Font = new Font("Segoe UI Semibold", 20f), AutoSize = true, Location = Pt(28, 22) };
+            var version = new Label { Text = "v" + typeof(SetupForm).Assembly.GetName().Version.ToString(2), ForeColor = Text2, AutoSize = true };
+            version.Location = new Point(title.Left + title.PreferredWidth + (int)(4 * _scale), title.Top + (title.PreferredHeight - version.PreferredHeight) * 2 / 3);
             var about = new Label
             {
-                Text = "Transmita no Discord pelo Broadcast Box: mais qualidade, sem limite do Nitro. " +
+                Text = "Transmita no Discord pelo Broadcast Box, com mais qualidade e sem precisar de Nitro. " +
                        "Quem tem o BBStream assiste sua live direto no Discord.",
                 ForeColor = Text2,
-                Location = new Point(30, 72),
-                Size = new Size(380, 44)
+                Location = Pt(30, 72),
+                Size = Px(380, 66)
             };
 
             _status.ForeColor = Text2;
-            _status.Location = new Point(30, 128);
-            _status.Size = new Size(380, 40);
+            _status.Location = Pt(30, 144);
+            _status.Size = Px(380, 44);
             _status.Text = Installer.IsInstalled()
                 ? "O BBStream já está instalado. Instale de novo para atualizar ou reparar."
                 : "O Discord vai fechar e abrir sozinho durante a instalação.";
 
-            _bar.Location = new Point(30, 170);
-            _bar.Size = new Size(380, 6);
+            _bar.Location = Pt(30, 194);
+            _bar.Size = Px(380, 6);
             _bar.Style = ProgressBarStyle.Continuous;
             _bar.Visible = false;
 
             _install.Text = Installer.IsInstalled() ? "Reinstalar" : "Instalar";
-            _install.Location = new Point(290, 198);
-            _install.Size = new Size(120, 38);
+            _install.Location = Pt(290, 228);
+            _install.Size = Px(120, 38);
             _install.FlatStyle = FlatStyle.Flat;
             _install.FlatAppearance.BorderSize = 0;
             _install.BackColor = Blurple;
@@ -100,7 +106,7 @@ namespace BBStreamSetup
 
             _uninstall.Text = "Desinstalar";
             _uninstall.AutoSize = true;
-            _uninstall.Location = new Point(28, 208);
+            _uninstall.Location = Pt(28, 238);
             _uninstall.LinkColor = Text2;
             _uninstall.ActiveLinkColor = Text1;
             _uninstall.LinkBehavior = LinkBehavior.HoverUnderline;
