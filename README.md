@@ -54,7 +54,7 @@ Mods de cliente vão contra os Termos de Serviço do Discord. O Vencord é usado
 | [`server`](server) | O servidor de presença (Python, UDP) que diz quem está ao vivo em qual call, e a ferramenta `bbstream-link.py` para registrar links. |
 | [`scripts/build-release.ps1`](scripts/build-release.ps1) | Gera todos os arquivos de um release. |
 
-O StreamerV2 fica em [master0022/vdo-ninja-streamer](https://github.com/master0022/vdo-ninja-streamer) (pasta `v0.2-gstreamer`, modo `--serve`).
+O StreamerV2 fica em [master0022/vdo-ninja-streamer](https://github.com/master0022/vdo-ninja-streamer/tree/discord-bridge/v0.2-gstreamer) (branch `discord-bridge`, pasta `v0.2-gstreamer`, modo `--serve`).
 
 ### Rodando o plugin a partir do código
 
