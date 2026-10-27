@@ -63,7 +63,7 @@ Copy-Item (Join-Path $out "installer\BBStreamSetup.exe") $out -Force
 
 if ($StreamerZip) {
     if (-not $StreamerVersion) { throw "-StreamerVersion is required with -StreamerZip (the installer re-downloads StreamerV2 only when it changes)." }
-    if ([IO.Path]::GetFullPath($StreamerZip) -ne (Join-Path $out "StreamerV2-win-x64.zip")) {
+    if ((Resolve-Path $StreamerZip).Path -ne (Join-Path $out "StreamerV2-win-x64.zip")) {
         Copy-Item $StreamerZip (Join-Path $out "StreamerV2-win-x64.zip") -Force
     }
     Set-Content -NoNewline -Encoding ascii (Join-Path $out "streamer-version.txt") $StreamerVersion
