@@ -41,13 +41,11 @@ Push-Location $Vencord
 try {
     if (-not (Test-Path "node_modules")) { Invoke-Checked pnpm @("install", "--frozen-lockfile") }
 
-    # The plugin goes in as a userplugin (skipped when it's already a link to this repo's copy).
+    # The plugin goes in as a userplugin. A copy, not a link: esbuild resolves links to their real
+    # path, where Vencord's import aliases (@api, @webpack, …) don't apply.
     $plugin = Join-Path $Vencord "src\userplugins\bbStream"
-    $item = Get-Item $plugin -ErrorAction SilentlyContinue
-    if (-not ($item -and $item.LinkType -and ([IO.Path]::GetFullPath($item.Target) -eq (Join-Path $repo "plugin\bbStream")))) {
-        if ($item) { Remove-Item $plugin -Recurse -Force }
-        Copy-Item (Join-Path $repo "plugin\bbStream") $plugin -Recurse
-    }
+    if (Test-Path $plugin) { Remove-Item $plugin -Recurse -Force }
+    Copy-Item (Join-Path $repo "plugin\bbStream") $plugin -Recurse
 
     $env:VENCORD_REMOTE = "master0022/bbstream"
     $env:VENCORD_HASH = $hash
