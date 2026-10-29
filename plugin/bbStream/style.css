@@ -395,3 +395,78 @@
     color: var(--text-feedback-critical, #f57976);
     font-size: 14px;
 }
+
+/* --- links: modal, offer under a chat message, saved list in settings --- */
+
+.vc-bbs-linkmodal {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 8px;
+}
+
+.vc-bbs-hint {
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.vc-bbs-offer {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+    padding: 6px 8px 6px 12px;
+    border-radius: 8px;
+    background: var(--background-base-lower, rgb(0 0 0 / 15%));
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.vc-bbs-offer-btn {
+    padding: 4px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--brand-500, #5865f2);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.vc-bbs-offer-btn:hover {
+    filter: brightness(1.1);
+}
+
+.vc-bbs-saved {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.vc-bbs-saved-title {
+    color: var(--header-primary, var(--text-default));
+    font-weight: 600;
+}
+
+.vc-bbs-saved-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+}
+
+.vc-bbs-saved-who {
+    color: var(--text-default, var(--text-normal));
+    font-weight: 500;
+}
+
+.vc-bbs-saved-url {
+    flex: 1;
+    overflow: hidden;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

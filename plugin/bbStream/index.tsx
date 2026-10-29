@@ -5,15 +5,21 @@
  */
 
 // BBStream: "Go Live" through StreamerV2 + Broadcast Box instead of Discord's own streaming.
-// Going live announces the stream to our presence server (UDP); watching pulls WHEP from
-// Broadcast Box. Nothing here makes a Discord API request.
+// Everyone streams to a link (see links.ts); viewers watch the links of people in voice for
+// whether they're online, and play them over WHEP. No server of our own, and nothing here
+// makes a Discord API request.
 
+import { NavContextMenuPatchCallback } from "@api/ContextMenu";
 import { definePluginSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
+import { copyToClipboard } from "@utils/clipboard";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
+import type { Message, User } from "@vencord/discord-types";
 import { findComponentByCodeLazy } from "@webpack";
-import { IconUtils, Menu, Popout, React, SelectedChannelStore, showToast, useRef, UserStore, useStateFromStores, VoiceStateStore } from "@webpack/common";
+import { IconUtils, Menu, Popout, React, SelectedChannelStore, SelectedGuildStore, showToast, useRef, UserStore, useStateFromStores, VoiceStateStore } from "@webpack/common";
 
+import { openLinkModal } from "./linkModal";
+import { DEFAULT_SERVER, defaultLink, linkId, linkUrl, parseLink, sameLink, StreamLink } from "./links";
 import { openPicker, Quality } from "./picker";
 import managedStyle from "./style.css?managed";
 import { closeViewer, unmountViewer, watch, WatchTarget } from "./viewer";
@@ -21,63 +27,60 @@ import { closeViewer, unmountViewer, watch, WatchTarget } from "./viewer";
 const Native = VencordNative.pluginHelpers.BBStream as PluginNative<typeof import("./native")>;
 const PanelButton = findComponentByCodeLazy(".GREEN,positionKeyStemOverride:");
 
-const POLL_MS = 3000;
-const HEARTBEAT_MS = 3000;
-const LINKS_POLL_MS = 5000;
-const LINKS_IDLE_POLL_MS = 30000;
-const NEARBY_POLL_MS = 2000;
-/** Where new users get a stream, and where older clients that don't say their server stream to. */
-const DEFAULT_SERVER = "https://b.siobud.com";
+const ONLINE_POLL_MS = 2000;
+const PACKS_REFRESH_MS = 30 * 60 * 1000;
+/** Status feeds kept open at once: everyone in my voice channel first, then linked people in this server's other channels. */
+const MAX_WATCHED = 24;
 
 const settings = definePluginSettings({
     streamKey: {
         type: OptionType.STRING,
-        description: "Your stream key. Leave empty to use the one linked to your Discord username (one is created on your first Go Live)",
+        description: "Your stream key. Leave empty for your BBStream default (or your link from a pack)",
         default: ""
     },
     server: {
         type: OptionType.STRING,
-        description: "Broadcast Box server you stream to. Leave empty for the linked one",
+        description: "Broadcast Box server you stream to. Leave empty for the default",
         default: ""
+    },
+    packs: {
+        type: OptionType.STRING,
+        description: "Link packs to load, one URL per line: shared lists of who streams where",
+        default: "",
+        onChange: () => refreshPacks()
+    },
+    savedLinks: {
+        type: OptionType.COMPONENT,
+        description: "",
+        component: () => <SavedLinks />
     },
     streamerPath: {
         type: OptionType.STRING,
         description: "Path to StreamerV2.exe. Leave empty for the installed one (its encoder and quality settings are used)",
         default: ""
     },
-    presenceHost: {
-        type: OptionType.STRING,
-        description: "Presence server host (UDP)",
-        default: "191.252.200.60"
-    },
-    presencePort: {
-        type: OptionType.NUMBER,
-        description: "Presence server port (UDP)",
-        default: 8200
-    },
     popoutHotkey: {
         type: OptionType.STRING,
         description: "Global hotkey that pins/unpins pop-outs (pinned = click-through). Electron accelerator",
         default: "Shift+PageDown",
         onChange: (v: string) => Native.setPopoutHotkey(v)
+    },
+    /** username -> stream link, saved from the user menu or a link in chat. */
+    links: {
+        type: OptionType.CUSTOM,
+        default: {} as Record<string, string>
     }
 });
 
 // --- shared state ------------------------------------------------------------------
 
-type LiveMap = Record<string, [channelId: string, streamKey: string, serverHost?: string]>;
-type LinkMap = Record<string, [server: string, streamKey: string, live: boolean]>;
+/** username -> link, from the loaded packs, and which pack each came from. */
+let packLinks: Record<string, string> = {};
+let packOf: Record<string, string> = {};
+/** "server key" -> online, from the status feeds. */
+let online: Record<string, boolean> = {};
 
-/** Plugin users currently live (from the presence server). */
-let live: LiveMap = {};
-/** Friends without the plugin, linked by Discord username on the VPS to their own Broadcast Box clone. The VPS checks if they're online. */
-let links: LinkMap = {};
-/** My own, faster checks of linked friends in my voice channel, keyed by "server key". Wins over the VPS's answer. */
-let nearby: Record<string, boolean> = {};
-
-const isLinkLive = (link: LinkMap[string]) => nearby[`${link[0]} ${link[1]}`] ?? link[2];
-
-interface MyStream { server: string; streamKey: string; channelId: string; source: string; quality: Quality; }
+interface MyStream extends StreamLink { channelId: string; source: string; quality: Quality; }
 let mine: MyStream | null = null;
 
 let version = 0;
@@ -102,57 +105,83 @@ function usersInVoice(channelId: string | null | undefined) {
     return channelId ? Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId) ?? {}) : [];
 }
 
-/** A linked friend's stream, only while it's actually online. */
-function rawLinkFor(userId: string) {
-    return links[UserStore.getUser(userId)?.username ?? ""] ?? links[userId];
+// --- links ---------------------------------------------------------------------------
+
+/** A link saved by hand or from a pack, if this user has one. */
+function explicitLink(userId: string): StreamLink | null {
+    const username = UserStore.getUser(userId)?.username;
+    if (!username) return null;
+    const url = settings.store.links[username] ?? packLinks[username];
+    return url ? parseLink(url) : null;
 }
 
-function linkFor(userId: string) {
-    const link = rawLinkFor(userId);
-    return link && isLinkLive(link) ? link : null;
-}
-
-interface Stream { userId: string; server: string; streamKey: string; linked: boolean; }
-
-const serverOf = ([, , host]: LiveMap[string]) => host ? `https://${host}` : DEFAULT_SERVER;
-
-/** Streams watchable from a voice channel: plugin users live there plus linked friends present in it. */
-function streamsIn(channelId: string | null | undefined): Stream[] {
-    if (!channelId) return [];
-    const streams: Stream[] = Object.entries(live)
-        .filter(([, [ch]]) => ch === channelId)
-        .map(([userId, entry]) => ({ userId, server: serverOf(entry), streamKey: entry[1], linked: false }));
-    for (const userId of usersInVoice(channelId)) {
-        const link = linkFor(userId);
-        if (link && !live[userId]) streams.push({ userId, server: link[0], streamKey: link[1], linked: true });
+/** Where a user streams: my own settings for me, else their saved/pack link, else their BBStream default. */
+function linkOf(userId: string): StreamLink {
+    if (userId === me()) {
+        const key = settings.store.streamKey.trim();
+        const server = settings.store.server.trim().replace(/\/+$/, "");
+        if (key) return { server: server || DEFAULT_SERVER, streamKey: key };
+        const link = explicitLink(userId) ?? defaultLink(userId);
+        return server ? { ...link, server } : link;
     }
-    return streams;
+    return explicitLink(userId) ?? defaultLink(userId);
 }
 
-function streamFor(userId: string): Stream | null {
-    if (live[userId]) return { userId, server: serverOf(live[userId]), streamKey: live[userId][1], linked: false };
-    const link = linkFor(userId);
-    if (link) return { userId, server: link[0], streamKey: link[1], linked: true };
-    return null;
+function saveLink(username: string, url: string | null) {
+    const links = { ...settings.store.links };
+    if (url) links[username] = url;
+    else delete links[username];
+    settings.store.links = links;
+    online = {};
+    notify();
+    checkOnline();
 }
+
+function isLive(userId: string) {
+    if (userId === me() && mine) return true;
+    return online[linkId(linkOf(userId))] === true;
+}
+
+interface Stream extends StreamLink { userId: string; }
+
+const streamFor = (userId: string): Stream | null => isLive(userId) ? { userId, ...(userId === me() && mine ? mine : linkOf(userId)) } : null;
+
+/** Streams watchable from a voice channel: the people in it who are live. */
+const streamsIn = (channelId: string | null | undefined) =>
+    usersInVoice(channelId).map(streamFor).filter((s): s is Stream => s != null);
 
 function watchStream(s: Stream) {
     watch({ userId: s.userId, name: displayName(s.userId), avatar: avatarOf(s.userId), server: s.server, streamKey: s.streamKey, self: s.userId === me() } satisfies WatchTarget);
+}
+
+// --- packs ---------------------------------------------------------------------------
+
+const packUrls = () => [...new Set([...settings.store.packs.split(/\s+/), ...installerUrls].filter(u => /^https?:\/\//.test(u)))];
+let installerUrls: string[] = [];
+
+async function refreshPacks() {
+    installerUrls = await Native.installerPacks();
+    const packs = await Native.loadPacks(packUrls());
+    const links: Record<string, string> = {}, from: Record<string, string> = {};
+    for (const pack of Object.values(packs))
+        for (const [who, url] of Object.entries(pack.links))
+            if (!(who in links)) { links[who] = url; from[who] = `the ${pack.name} pack`; }
+    packLinks = links;
+    packOf = from;
+    notify();
 }
 
 // --- LIVE badges on voice channel rows -----------------------------------------------
 
 let badgeStyle: HTMLStyleElement | null = null;
 
-/** Voice rows carry data-bbstream-uid/-name (see patches); generated rules put a LIVE pill on the right ones. */
+/** Voice rows carry data-bbstream-uid (see patches); generated rules put a LIVE pill on the right ones. */
 function updateBadges() {
     if (!badgeStyle?.isConnected) badgeStyle = document.head.appendChild(document.createElement("style"));
-    const liveIds = Object.keys(live).filter(id => /^\d+$/.test(id));
-    const linkedNames = Object.keys(links).filter(name => isLinkLive(links[name]) && /^[a-z0-9_.]+$/.test(name));
-    const sel = [
-        ...liveIds.map(id => `[data-bbstream-uid="${id}"]::after`),
-        ...linkedNames.map(name => `[data-bbstream-name="${name}"]::after`)
-    ];
+    const ids = new Set(watched);
+    const myId = me();
+    if (myId && mine) ids.add(myId);
+    const sel = [...ids].filter(id => /^\d+$/.test(id) && isLive(id)).map(id => `[data-bbstream-uid="${id}"]::after`);
     badgeStyle.textContent = sel.length ? `${sel.join(",")}{content:"LIVE"}` : "";
 }
 
@@ -171,75 +200,29 @@ function onBadgeClick(e: MouseEvent) {
     watchStream(stream);
 }
 
-// --- presence ------------------------------------------------------------------------
+// --- who's online --------------------------------------------------------------------
 
-async function poll() {
-    const { presenceHost, presencePort } = settings.store;
-    if (!SelectedChannelStore.getVoiceChannelId()) {
-        if (Object.keys(live).length) { live = {}; notify(); }
-        return;
-    }
-    const res = await Native.query(presenceHost, presencePort, "Q") as LiveMap | null;
-    if (res && JSON.stringify(res) !== JSON.stringify(live)) { live = res; notify(); }
-}
-
-let linksPolledAt = 0;
-
-/** Often while in voice (that's where badges matter), rarely otherwise. */
-async function pollLinks() {
-    if (!SelectedChannelStore.getVoiceChannelId() && Date.now() - linksPolledAt < LINKS_IDLE_POLL_MS) return;
-    linksPolledAt = Date.now();
-    const res = await Native.query(settings.store.presenceHost, settings.store.presencePort, "K") as LinkMap | null;
-    if (res && JSON.stringify(res) !== JSON.stringify(links)) { links = res; notify(); }
-}
-
-/** Watches linked friends in my voice channel directly, so their LIVE badge shows up within a few seconds. */
-async function checkNearby() {
-    const vc = SelectedChannelStore.getVoiceChannelId();
-    const targets = vc
-        ? [...new Set(usersInVoice(vc).filter(id => id !== me() || !mine).map(rawLinkFor).filter(Boolean).map(l => `${l[0]} ${l[1]}`))]
-        : [];
-    const next = await Native.watchOnline(targets);
-    if (JSON.stringify(next) !== JSON.stringify(nearby)) { nearby = next; notify(); }
-}
-
-function heartbeat() {
-    if (!mine) return;
-    const { presenceHost, presencePort } = settings.store;
-    Native.heartbeat(presenceHost, presencePort, me(), mine.channelId, mine.streamKey, mine.server);
-}
-
-const trimServer = (url: string) => url.trim().replace(/\/+$/, "");
+/** User ids whose links have a status feed open right now. */
+let watched: string[] = [];
 
 /**
- * Where I stream: the settings if filled in, else the link for my username on the presence server.
- * The first time, a fresh key on the default server is claimed for me, so nothing needs setting up.
+ * Everyone in my voice channel (they may have BBStream with its default link), then people in
+ * this server's other voice channels who have a link: their badges show without joining.
  */
-async function myLink(): Promise<{ server: string; streamKey: string; } | null> {
-    const { presenceHost, presencePort } = settings.store;
-    const server = trimServer(settings.store.server);
-    const streamKey = settings.store.streamKey.trim();
-    if (streamKey) return { server: server || DEFAULT_SERVER, streamKey };
+function watchList() {
+    const myId = me();
+    const vc = SelectedChannelStore.getVoiceChannelId();
+    const guildId = SelectedGuildStore.getGuildId();
+    const ids = usersInVoice(vc);
+    const elsewhere = guildId ? Object.keys(VoiceStateStore.getVoiceStates(guildId) ?? {}) : [];
+    for (const id of elsewhere) if (!ids.includes(id) && explicitLink(id)) ids.push(id);
+    return ids.filter(id => !(id === myId && mine)).slice(0, MAX_WATCHED);
+}
 
-    const username = UserStore.getCurrentUser()?.username;
-    if (!username) return null;
-    const lookup = async () => {
-        const res = await Native.query(presenceHost, presencePort, "K") as LinkMap | null;
-        if (res) { links = res; notify(); }
-        return res?.[username];
-    };
-    let link = await lookup();
-    if (!link) {
-        const rand = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => (b % 36).toString(36)).join("");
-        const key = `bbs-${username.replace(/[^a-z0-9_]/g, "-")}-${rand}`;
-        const reply = await Native.register(presenceHost, presencePort, username, DEFAULT_SERVER, key);
-        if (reply === "ok") {
-            Native.logLine(`claimed a stream key for ${username}`);
-            return { server: server || DEFAULT_SERVER, streamKey: key };
-        }
-        if (reply === "taken") link = await lookup();
-    }
-    return link ? { server: server || link[0], streamKey: link[1] } : null;
+async function checkOnline() {
+    watched = watchList();
+    const next = await Native.watchOnline([...new Set(watched.map(id => linkId(linkOf(id))))]);
+    if (JSON.stringify(next) !== JSON.stringify(online)) { online = next; notify(); }
 }
 
 // --- my stream -----------------------------------------------------------------------
@@ -248,26 +231,25 @@ let starting = false;
 
 async function startGoLive() {
     const vc = SelectedChannelStore.getVoiceChannelId();
-    if (!vc) return showToast({ text: "Join a voice channel to go live", variant: "critical" });
+    const myId = me();
+    if (!vc || !myId) return showToast({ text: "Join a voice channel to go live", variant: "critical" });
     if (starting) return;
     starting = true;
     const { streamerPath } = settings.store;
-    const [status, link] = await Promise.all([Native.streamerStatus(streamerPath), mine ? { server: mine.server, streamKey: mine.streamKey } : myLink()]);
+    const status = await Native.streamerStatus(streamerPath);
     starting = false;
     if (!status) {
         const s = await Native.streamState();
         return showToast({ text: s.error ?? "StreamerV2 didn't respond. Check its path in the BBStream settings.", variant: "critical" });
     }
-    if (!link) return showToast({ text: "Couldn't reach the BBStream server to find your stream. Try again in a moment.", variant: "critical" });
+    const link: StreamLink = mine ? { server: mine.server, streamKey: mine.streamKey } : linkOf(myId);
 
     openPicker(streamerPath, { width: status.width, height: status.height, fps: status.fps, kbps: status.kbps }, link, (source, quality) => {
         const channelId = SelectedChannelStore.getVoiceChannelId();
         if (!channelId) { Native.stopLive(); return; }
         mine = { ...link, channelId, source: source.name, quality };
         Native.logLine(`live in ${channelId} from ${source.name}`);
-        heartbeat();
         notify();
-        setTimeout(poll, 300);
     });
 }
 
@@ -275,12 +257,9 @@ async function stopGoLive(reason?: string) {
     if (!mine) return;
     Native.logLine(`stopGoLive: ${reason ?? "by user"}`);
     mine = null;
-    const { presenceHost, presencePort } = settings.store;
-    Native.stop(presenceHost, presencePort, me());
     notify();
     await Native.stopLive();
     if (reason) showToast({ text: reason });
-    setTimeout(poll, 300);
 }
 
 /** After a Ctrl+R StreamerV2 is still streaming in the main process; pick it back up. */
@@ -299,7 +278,6 @@ async function resumeMine() {
     if (!s.link || mine) return;
     mine = { ...s.link, channelId, source: s.source ?? "your screen", quality: { width: s.width, height: s.height, fps: s.fps, kbps: s.kbps } };
     Native.logLine(`resumed stream after reload in ${channelId}`);
-    heartbeat();
     notify();
 }
 
@@ -308,12 +286,19 @@ async function watchMine() {
     if (!mine) return resumeMine();
     const vc = SelectedChannelStore.getVoiceChannelId();
     if (vc !== mine.channelId) {
-        if (vc) { mine.channelId = vc; heartbeat(); notify(); }
+        if (vc) { mine.channelId = vc; notify(); }
         else return stopGoLive("Stream ended: you left the voice channel");
     }
     const s = await Native.streamState();
     if (mine && s.phase !== "live" && s.phase !== "starting")
         stopGoLive(s.error ? `Stream ended: ${s.error}` : "Stream ended");
+}
+
+function copyMyLink() {
+    const myId = me();
+    if (!myId) return;
+    copyToClipboard(linkUrl(mine ?? linkOf(myId)));
+    showToast({ text: "Stream link copied. Friends without BBStream can open it in a browser." });
 }
 
 // --- account panel button ------------------------------------------------------------------
@@ -336,18 +321,19 @@ function StreamMenu({ closePopout, vc }: { closePopout(): void; vc: string | nul
             {mine
                 ? <Menu.MenuGroup label={`Streaming ${mine.source}`}>
                     <Menu.MenuItem id="vc-bbs-change" label="Change source…" action={() => startGoLive()} />
-                    <Menu.MenuItem id="vc-bbs-preview" label="Preview my stream" action={() => watchStream({ userId: me(), server: mine!.server, streamKey: mine!.streamKey, linked: false })} />
+                    <Menu.MenuItem id="vc-bbs-preview" label="Preview my stream" action={() => watchStream({ userId: me()!, server: mine!.server, streamKey: mine!.streamKey })} />
                     <Menu.MenuItem id="vc-bbs-stop" label="Stop streaming" color="danger" action={() => stopGoLive()} />
                 </Menu.MenuGroup>
                 : <Menu.MenuItem id="vc-bbs-golive" label="Go Live…" disabled={!vc} action={() => startGoLive()} />}
             {others.length > 0 && (
                 <Menu.MenuGroup label="Live in this channel">
                     {others.map(s => (
-                        <Menu.MenuItem key={s.userId} id={`vc-bbs-w-${s.userId}`} label={displayName(s.userId)} subtext={s.linked ? "Linked stream" : undefined} action={() => watchStream(s)} />
+                        <Menu.MenuItem key={s.userId} id={`vc-bbs-w-${s.userId}`} label={displayName(s.userId)} action={() => watchStream(s)} />
                     ))}
                 </Menu.MenuGroup>
             )}
             <Menu.MenuGroup>
+                <Menu.MenuItem id="vc-bbs-copy" label="Copy my stream link" action={copyMyLink} />
                 <Menu.MenuItem id="vc-bbs-pop-close" label="Close pop-outs" action={() => Native.closePopouts()} />
             </Menu.MenuGroup>
         </Menu.Menu>
@@ -358,7 +344,7 @@ function BBStreamButton(props: { nameplate?: any; }) {
     useVersion();
     const buttonRef = useRef<HTMLButtonElement | null>(null);
     const vc = useStateFromStores([SelectedChannelStore], () => SelectedChannelStore.getVoiceChannelId() ?? null);
-    // Re-render when people join/leave so linked friends show up in the menu.
+    // Re-render when people join/leave so their streams show up in the menu.
     useStateFromStores([VoiceStateStore], () => usersInVoice(vc).join(), [vc]);
 
     if (!vc && !mine) return null; // like Discord's Go Live, only offered while in voice
@@ -384,6 +370,88 @@ function BBStreamButton(props: { nameplate?: any; }) {
                 />
             )}
         </Popout>
+    );
+}
+
+// --- user menu: set someone's link, watch them --------------------------------------------
+
+function editLink(user: User) {
+    const saved = settings.store.links[user.username];
+    openLinkModal({
+        name: user.globalName ?? user.username,
+        current: saved ?? packLinks[user.username] ?? "",
+        source: saved ? null : packOf[user.username] ?? null,
+        onSave: url => saveLink(user.username, url)
+    });
+}
+
+const userContextPatch: NavContextMenuPatchCallback = (children, { user }: { user?: User; }) => {
+    if (!user || user.bot) return;
+    const stream = streamFor(user.id);
+    children.push(
+        <Menu.MenuGroup>
+            {stream && <Menu.MenuItem id="vc-bbs-u-watch" label="Watch stream" action={() => watchStream(stream)} />}
+            {user.id === me()
+                ? <Menu.MenuItem id="vc-bbs-u-copy" label="Copy my stream link" action={copyMyLink} />
+                : <Menu.MenuItem id="vc-bbs-u-link" label="Set stream link…" action={() => editLink(user)} />}
+        </Menu.MenuGroup>
+    );
+};
+
+// --- a stream link posted in chat: offer to save it as the author's -------------------------
+
+const URL_RE = /https?:\/\/[^\s<>()]+/g;
+
+/** Hosts known to be Broadcast Box servers: the default one and any used by a link we have. */
+function knownServers() {
+    const servers = new Set([DEFAULT_SERVER]);
+    for (const url of [...Object.values(settings.store.links), ...Object.values(packLinks)]) {
+        const link = parseLink(url);
+        if (link) servers.add(link.server);
+    }
+    return servers;
+}
+
+function LinkOffer({ message }: { message: Message; }) {
+    useVersion();
+    const { author } = message;
+    if (!author || author.id === me() || author.bot) return null;
+    const servers = knownServers();
+    const link = (message.content.match(URL_RE) ?? []).map(parseLink).find(l => l && servers.has(l.server));
+    if (!link || sameLink(link, explicitLink(author.id))) return null;
+    const name = author.globalName ?? author.username;
+    return (
+        <div className="vc-bbs-offer">
+            <span>Is this where {name} streams?</span>
+            <button className="vc-bbs-offer-btn" onClick={() => { saveLink(author.username, linkUrl(link)); showToast({ text: `Saved. You'll see when ${name} is live.` }); }}>
+                Save as {name}'s stream
+            </button>
+        </div>
+    );
+}
+
+const LinkOfferSafe = ErrorBoundary.wrap(LinkOffer, { noop: true });
+
+// --- settings: saved links ---------------------------------------------------------------
+
+function SavedLinks() {
+    useVersion();
+    const links = Object.entries(settings.store.links);
+    const packs = Object.keys(packLinks).length;
+    return (
+        <div className="vc-bbs-saved">
+            <div className="vc-bbs-saved-title">Saved stream links</div>
+            {links.length === 0
+                ? <div className="vc-bbs-hint">None yet. Right click someone → Set stream link, or click "Save" on a stream link they post in chat.</div>
+                : links.map(([who, url]) => (
+                    <div key={who} className="vc-bbs-saved-row">
+                        <span className="vc-bbs-saved-who">{who}</span>
+                        <span className="vc-bbs-saved-url">{url}</span>
+                        <button className="vc-bbs-offer-btn" onClick={() => saveLink(who, null)}>Remove</button>
+                    </div>
+                ))}
+            {packs > 0 && <div className="vc-bbs-hint">Plus {packs} from packs.</div>}
+        </div>
     );
 }
 
@@ -413,25 +481,28 @@ export default definePlugin({
             find: "#{intl::GUEST_NAME_SUFFIX})]",
             replacement: {
                 match: /#{intl::GUEST_NAME_SUFFIX}.{0,50}?""\](?<=user:(\i).+?)/,
-                replace: '$&,"data-bbstream-uid":$1?.id,"data-bbstream-name":$1?.username,'
+                replace: '$&,"data-bbstream-uid":$1?.id,'
             }
         }
     ],
 
+    contextMenus: {
+        "user-context": userContextPatch
+    },
+
     BBStreamButton: ErrorBoundary.wrap(BBStreamButton, { noop: true }),
+
+    renderMessageAccessory: props => <LinkOfferSafe message={props.message} />,
 
     start() {
         Native.setPopoutHotkey(settings.store.popoutHotkey);
         timers.push(
-            setInterval(poll, POLL_MS),
-            setInterval(heartbeat, HEARTBEAT_MS),
             setInterval(watchMine, 1500),
-            setInterval(pollLinks, LINKS_POLL_MS),
-            setInterval(checkNearby, NEARBY_POLL_MS)
+            setInterval(checkOnline, ONLINE_POLL_MS),
+            setInterval(refreshPacks, PACKS_REFRESH_MS)
         );
         document.addEventListener("click", onBadgeClick, true);
-        poll();
-        pollLinks();
+        refreshPacks();
         resumeUntil = Date.now() + 20000;
         updateBadges();
     },
@@ -443,7 +514,7 @@ export default definePlugin({
         closeViewer();
         unmountViewer();
         Native.watchOnline([]);
-        live = {};
+        online = {};
         badgeStyle?.remove();
         badgeStyle = null;
     }

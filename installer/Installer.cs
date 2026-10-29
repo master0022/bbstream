@@ -30,6 +30,36 @@ namespace BBStreamSetup
         public static string Root => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BBStream");
         static string Dist => Path.Combine(Root, "dist");
         static string StreamerDir => Path.Combine(Root, "StreamerV2");
+        static string PacksFile => Path.Combine(Root, "packs.txt");
+
+        /// <summary>A link pack to subscribe the plugin to (from --pack, or embedded at the end of this exe).</summary>
+        public static string Pack { get; set; }
+
+        const string PackMarker = "BBSTREAM-PACK:";
+
+        /// <summary>
+        /// A pack URL appended to the exe after its last byte: "\nBBSTREAM-PACK:https://…\n". Windows ignores
+        /// trailing data, so one build is stamped into BBStreamSetup-friends.exe and the like without recompiling.
+        /// </summary>
+        public static string EmbeddedPack(string exe)
+        {
+            try
+            {
+                using (var file = File.OpenRead(exe))
+                {
+                    var length = (int)Math.Min(4096, file.Length);
+                    var tail = new byte[length];
+                    file.Seek(-length, SeekOrigin.End);
+                    file.Read(tail, 0, length);
+                    var text = Encoding.ASCII.GetString(tail);
+                    var at = text.LastIndexOf(PackMarker, StringComparison.Ordinal);
+                    if (at < 0) return null;
+                    var url = text.Substring(at + PackMarker.Length).Split('\n')[0].Trim();
+                    return url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? url : null;
+                }
+            }
+            catch (IOException) { return null; }
+        }
         static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
         public delegate void Progress(string text, int percent);
@@ -83,6 +113,7 @@ namespace BBStreamSetup
                 File.WriteAllText(versionPath, streamerVersion);
             }
             TryDelete(staging);
+            if (Pack != null) AddPack(Pack);
 
             progress("Conectando ao Discord…", 94);
             foreach (var discord in discords)
@@ -279,6 +310,13 @@ namespace BBStreamSetup
                     entry.ExtractToFile(target, true);
                 }
             }
+        }
+
+        static void AddPack(string url)
+        {
+            var packs = File.Exists(PacksFile) ? File.ReadAllLines(PacksFile).Select(l => l.Trim()).Where(l => l.Length > 0).ToList() : new List<string>();
+            if (!packs.Contains(url)) packs.Add(url);
+            File.WriteAllLines(PacksFile, packs);
         }
 
         static void TryDelete(string path)

@@ -4,11 +4,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-// Runs in Electron's main process: UDP to the presence server, WHEP signalling and the
+// Runs in Electron's main process: link packs, WHEP signalling and status feeds, StreamerV2, and the
 // pop-out / overlay player windows. Nothing here talks to Discord.
 
 import { ChildProcess, spawn } from "child_process";
-import { createSocket, Socket } from "dgram";
 import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, IpcMainInvokeEvent, Rectangle, screen } from "electron";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -33,56 +32,39 @@ export function logLine(_: IpcMainInvokeEvent, text: string) {
     log(`[ui] ${text}`);
 }
 
-// --- presence -------------------------------------------------------------
+// --- packs ----------------------------------------------------------------
+// A pack is a JSON file anyone can host (a gist, a repo file): { "name": "...", "links": { "username": "https://server/key" } }.
+// The installer can subscribe to some for you (%APPDATA%\BBStream\packs.txt, one URL per line).
 
-let sock: Socket | null = null;
+const installerPacksPath = () => join(app.getPath("appData"), "BBStream", "packs.txt");
+const packCachePath = () => join(app.getPath("userData"), "bbstream-packs.json");
 
-function getSocket() {
-    if (sock) return sock;
-    sock = createSocket("udp4");
-    sock.on("error", () => { sock?.close(); sock = null; });
-    return sock;
+export function installerPacks(): string[] {
+    try { return readFileSync(installerPacksPath(), "utf8").split(/\s+/).filter(u => /^https?:\/\//.test(u)); } catch { return []; }
 }
 
-/** Viewers learn which server to watch from the host sent along with the key. */
-export function heartbeat(_: IpcMainInvokeEvent, host: string, port: number, userId: string, channelId: string, streamKey: string, server: string) {
-    let serverHost = "";
-    try { serverHost = new URL(server).host; } catch { }
-    getSocket().send(`L ${userId} ${channelId} ${streamKey} ${serverHost}`.trimEnd(), port, host);
-}
+export interface Pack { name: string; links: Record<string, string>; }
 
-export function stop(_: IpcMainInvokeEvent, host: string, port: number, userId: string) {
-    getSocket().send(`S ${userId}`, port, host);
-}
-
-/** "Q" -> { userId: [channelId, streamKey, serverHost] }, "K" -> { username: [server, streamKey, live] }; null on timeout. */
-export function query(_: IpcMainInvokeEvent, host: string, port: number, cmd: "Q" | "K"): Promise<Record<string, any[]> | null> {
-    return ask(host, port, cmd).then(reply => {
-        try { return reply ? JSON.parse(reply) : null; } catch { return null; }
-    });
-}
-
-/** Claims a stream for a username that has none yet: "ok", "taken", or null when the server didn't answer. */
-export function register(_: IpcMainInvokeEvent, host: string, port: number, username: string, server: string, streamKey: string) {
-    return ask(host, port, `R ${username} ${server} ${streamKey}`);
-}
-
-function ask(host: string, port: number, msg: string): Promise<string | null> {
-    return new Promise(resolve => {
-        const s = createSocket("udp4");
-        let finished = false;
-        const done = (v: string | null) => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timer);
-            s.close();
-            resolve(v);
-        };
-        const timer = setTimeout(() => done(null), 2000);
-        s.on("message", reply => done(reply.toString()));
-        s.on("error", () => done(null));
-        s.send(msg, port, host);
-    });
+/** Fetches each pack, falling back to the last copy that loaded so links survive being offline. */
+export async function loadPacks(_: IpcMainInvokeEvent, urls: string[]): Promise<Record<string, Pack>> {
+    let cache: Record<string, Pack> = {};
+    try { cache = JSON.parse(readFileSync(packCachePath(), "utf8")); } catch { }
+    const result: Record<string, Pack> = {};
+    await Promise.all(urls.map(async url => {
+        try {
+            const res = await fetch(url, { headers: { "Cache-Control": "no-cache" }, signal: AbortSignal.timeout(10000) });
+            const data = await res.json();
+            if (!res.ok || typeof data?.links !== "object") throw new Error(`bad pack ${res.status}`);
+            const links: Record<string, string> = {};
+            for (const [who, link] of Object.entries(data.links)) if (typeof link === "string") links[who.toLowerCase()] = link;
+            result[url] = { name: typeof data.name === "string" ? data.name : url, links };
+        } catch (e) {
+            log(`pack ${url}: ${e}`);
+            if (cache[url]) result[url] = cache[url];
+        }
+    }));
+    try { writeFileSync(packCachePath(), JSON.stringify(result)); } catch { }
+    return result;
 }
 
 export async function whep(_: IpcMainInvokeEvent, server: string, streamKey: string, offerSdp: string) {

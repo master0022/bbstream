@@ -14,6 +14,8 @@ namespace BBStreamSetup
         static int Main(string[] args)
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+            var packArg = Array.IndexOf(args, "--pack");
+            Installer.Pack = packArg >= 0 && packArg + 1 < args.Length ? args[packArg + 1] : Installer.EmbeddedPack(Application.ExecutablePath);
             if (args.Contains("--install") || args.Contains("--uninstall"))
             {
                 try
@@ -87,6 +89,8 @@ namespace BBStreamSetup
             _status.Text = Installer.IsInstalled()
                 ? "O BBStream já está instalado. Instale de novo para atualizar ou reparar."
                 : "O Discord vai fechar e abrir sozinho durante a instalação.";
+            if (Installer.Pack != null)
+                _status.Text += " Já vem com a lista de links dos seus amigos.";
 
             _bar.Location = Pt(30, 194);
             _bar.Size = Px(380, 6);

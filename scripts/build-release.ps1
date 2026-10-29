@@ -61,6 +61,15 @@ try {
 Invoke-Checked dotnet @("build", (Join-Path $repo "installer\BBStreamSetup.csproj"), "-c", "Release", "-o", (Join-Path $out "installer"))
 Copy-Item (Join-Path $out "installer\BBStreamSetup.exe") $out -Force
 
+# One installer per pack in packs/, with the pack's URL appended after the exe's last byte
+# (see Installer.EmbeddedPack): BBStreamSetup-amigos.exe installs with that pack subscribed.
+$setup = [IO.File]::ReadAllBytes((Join-Path $out "BBStreamSetup.exe"))
+foreach ($pack in Get-ChildItem (Join-Path $repo "packs") -Filter *.json -ErrorAction SilentlyContinue) {
+    $url = "https://raw.githubusercontent.com/master0022/bbstream/main/packs/$($pack.Name)"
+    $stamp = [Text.Encoding]::ASCII.GetBytes("`nBBSTREAM-PACK:$url`n")
+    [IO.File]::WriteAllBytes((Join-Path $out "BBStreamSetup-$($pack.BaseName).exe"), [byte[]]($setup + $stamp))
+}
+
 if ($StreamerZip) {
     if (-not $StreamerVersion) { throw "-StreamerVersion is required with -StreamerZip (the installer re-downloads StreamerV2 only when it changes)." }
     if ((Resolve-Path $StreamerZip).Path -ne (Join-Path $out "StreamerV2-win-x64.zip")) {
