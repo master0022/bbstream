@@ -7,9 +7,13 @@
 // Runs in Electron's main process: link packs, WHEP signalling and status feeds, StreamerV2, and the
 // pop-out / overlay player windows. Nothing here talks to Discord.
 
+import { RendererSettings } from "@main/settings";
+import { VENCORD_FILES } from "@main/updater/common";
+import { fetchBuffer, fetchJson } from "@main/utils/http";
+import { gitHash, gitRemote, VENCORD_USER_AGENT } from "@shared/vencordUserAgent";
 import { ChildProcess, spawn } from "child_process";
 import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, IpcMainInvokeEvent, Rectangle, screen } from "electron";
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { createInterface } from "readline";
@@ -31,6 +35,35 @@ function log(text: string) {
 export function logLine(_: IpcMainInvokeEvent, text: string) {
     log(`[ui] ${text}`);
 }
+
+// --- self-heal updates ----------------------------------------------------
+// Vencord checks for updates from inside the Discord window. When a Discord update breaks that
+// window (it did when Discord moved to rspack), the fix never arrives. So the main process also
+// checks once per launch and writes a newer release next to patcher.js: the next start runs it.
+
+async function updateFromMain() {
+    if (!IS_STANDALONE || IS_UPDATER_DISABLED || !RendererSettings.store.autoUpdate) return;
+    try {
+        const headers = { Accept: "application/vnd.github+json", "User-Agent": VENCORD_USER_AGENT };
+        const release = await fetchJson(`https://api.github.com/repos/${gitRemote}/releases/latest`, { headers });
+        const hash = release.name.slice(release.name.lastIndexOf(" ") + 1);
+        if (hash === gitHash) return;
+        const assets = (release.assets as { name: string; browser_download_url: string; }[])
+            .filter(a => VENCORD_FILES.includes(a.name));
+        if (assets.length !== VENCORD_FILES.length) return;
+        // Download everything first, so a failure never leaves a mix of versions.
+        const files = await Promise.all(assets.map(async a => [join(__dirname, a.name), await fetchBuffer(a.browser_download_url)] as const));
+        for (const [path, contents] of files) {
+            writeFileSync(path + ".new", contents);
+            renameSync(path + ".new", path);
+        }
+        log(`updated ${gitHash} -> ${hash}; applies on the next Discord start`);
+    } catch (e) {
+        log(`update check failed: ${e}`);
+    }
+}
+
+setTimeout(updateFromMain, 20000);
 
 // --- packs ----------------------------------------------------------------
 // A pack is a JSON file anyone can host (a gist, a repo file): { "name": "...", "links": { "username": "https://server/key" } }.
