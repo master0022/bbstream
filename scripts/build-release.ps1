@@ -1,5 +1,5 @@
 <#
-Builds everything a release needs into release/:
+Builds everything a release needs into release/, on the Vencord version in vencord-version.txt:
   patcher.js, preload.js, renderer.js, renderer.css   Vencord (standalone) with the BBStream plugin
   BBStreamSetup.exe                                   the installer
   StreamerV2-win-x64.zip, streamer-version.txt        copied from -StreamerZip (built in the StreamerV2 repo)
@@ -14,7 +14,7 @@ named "... <short hash>" of a commit that is on GitHub.
 [CmdletBinding()]
 param(
     [string]$Vencord = (Join-Path $PSScriptRoot "..\.build\Vencord"),
-    [string]$VencordRef = "v1.15.16",
+    [string]$VencordRef = (Get-Content (Join-Path $PSScriptRoot "..\vencord-version.txt")).Trim(),
     [string]$StreamerZip = "",
     [string]$StreamerVersion = ""
 )

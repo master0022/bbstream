@@ -1,0 +1,85 @@
+# When Vencord releases a new version (usually a fix for something a Discord update broke),
+# rebuild BBStream on it and publish a release. Everyone's Discord picks it up on the next start.
+# Only the Vencord files are rebuilt; the installers and StreamerV2 are carried over from the
+# latest release. A failed build publishes nothing (and GitHub emails the repo owner).
+
+name: Follow Vencord
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build even if Vencord didn't change, but don't push or publish
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency: follow-vencord
+
+jobs:
+  follow:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run || false }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find Vencord's latest version
+        id: version
+        run: |
+          latest=$(git ls-remote --tags https://github.com/Vendicated/Vencord.git 'v*' | grep -v '\^{}' | sed 's|.*refs/tags/||' | sort -V | tail -1)
+          current=$(cat vencord-version.txt)
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Vencord: building on $current, latest is $latest"
+          if [ "$latest" = "$current" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stamp the new version
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          echo "${{ steps.version.outputs.latest }}" > vencord-version.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Build on Vencord ${{ steps.version.outputs.latest }}" || true
+          echo "HASH=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        if: steps.version.outputs.skip != 'true'
+        with:
+          node-version: 22
+
+      - name: Build Vencord with BBStream
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          git clone --depth 1 --branch "${{ steps.version.outputs.latest }}" https://github.com/Vendicated/Vencord.git .build/Vencord
+          cp -r plugin/bbStream .build/Vencord/src/userplugins/bbStream
+          cd .build/Vencord
+          corepack enable
+          pnpm install --frozen-lockfile
+          # The plugin must still type-check against the new Vencord.
+          if npx tsc --noEmit -p . | grep userplugins/bbStream; then exit 1; fi
+          VENCORD_REMOTE=master0022/bbstream VENCORD_HASH=$HASH pnpm build --standalone
+          mkdir -p ../../release
+          cp dist/patcher.js dist/preload.js dist/renderer.js dist/renderer.css ../../release/
+          grep -q "$HASH" ../../release/patcher.js
+
+      - name: Carry over installers and StreamerV2
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          gh release download --repo "$GITHUB_REPOSITORY" --dir release \
+            --pattern 'BBStreamSetup*.exe' --pattern 'StreamerV2-win-x64.zip' --pattern 'streamer-version.txt'
+          ls -la release
+
+      - name: Publish
+        if: steps.version.outputs.skip != 'true' && env.DRY_RUN != 'true'
+        run: |
+          git push origin HEAD:main
+          version="${{ steps.version.outputs.latest }}"
+          printf 'Atualização automática: BBStream no Vencord %s.\n\nO Discord baixa esta versão sozinho; ela vale a partir da próxima vez que você abrir o Discord.\n' "$version" > notes.md
+          gh release create "auto-$version-$HASH" --title "BBStream (Vencord ${version#v}) $HASH" --notes-file notes.md --target "$(git rev-parse HEAD)" release/*
