@@ -45,6 +45,7 @@ try {
     # path, where Vencord's import aliases (@api, @webpack, …) don't apply.
     $plugin = Join-Path $Vencord "src\userplugins\bbStream"
     if (Test-Path $plugin) { Remove-Item $plugin -Recurse -Force }
+    New-Item -ItemType Directory -Force (Split-Path $plugin) | Out-Null
     Copy-Item (Join-Path $repo "plugin\bbStream") $plugin -Recurse
 
     $env:VENCORD_REMOTE = "master0022/bbstream"

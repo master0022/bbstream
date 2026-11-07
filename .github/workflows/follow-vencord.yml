@@ -58,6 +58,7 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         run: |
           git clone --depth 1 --branch "${{ steps.version.outputs.latest }}" https://github.com/Vendicated/Vencord.git .build/Vencord
+          mkdir -p .build/Vencord/src/userplugins
           cp -r plugin/bbStream .build/Vencord/src/userplugins/bbStream
           cd .build/Vencord
           corepack enable
