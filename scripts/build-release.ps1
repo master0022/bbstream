@@ -14,7 +14,7 @@ named "... <short hash>" of a commit that is on GitHub.
 [CmdletBinding()]
 param(
     [string]$Vencord = (Join-Path $PSScriptRoot "..\.build\Vencord"),
-    [string]$VencordRef = "v1.15.13",
+    [string]$VencordRef = "v1.15.16",
     [string]$StreamerZip = "",
     [string]$StreamerVersion = ""
 )
