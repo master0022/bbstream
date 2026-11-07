@@ -100,6 +100,8 @@ Copie (ou crie um link de) `plugin/bbStream` para `Vencord/src/userplugins/bbStr
 
 O título precisa terminar com o hash curto do commit: é assim que o atualizador do Vencord sabe que há versão nova.
 
+Quando o Vencord lança uma versão nova (normalmente consertando algo que uma atualização do Discord quebrou), o workflow [Follow Vencord](.github/workflows/follow-vencord.yml) faz isso sozinho: a cada 6 horas ele confere, monta o BBStream na versão nova e publica um release. A versão usada fica em `vencord-version.txt`.
+
 ### Como as lives são encontradas
 
 Não existe servidor do BBStream. Cada pessoa transmite num link: o que ela salvou ou veio de um pack, ou então o padrão `https://b.siobud.com/bbs-<id do Discord>`. O plugin abre uma checagem leve (WHEP) no link de cada pessoa da sua call, e de quem tem link nas outras calls do servidor, e mostra o selo LIVE quando o Broadcast Box diz que a live está no ar.
