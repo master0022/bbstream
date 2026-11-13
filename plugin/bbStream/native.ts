@@ -19,6 +19,7 @@ import { dirname, join } from "path";
 import { createInterface } from "readline";
 
 import { playerHtml, PRELOAD } from "./player";
+import { updateStreamer } from "./streamerUpdate";
 
 // --- log ------------------------------------------------------------------
 // %TEMP%/bbstream.log: what the streamer said and did, for when going live misbehaves.
@@ -64,6 +65,12 @@ async function updateFromMain() {
 }
 
 setTimeout(updateFromMain, 20000);
+
+setTimeout(() => {
+    if (!IS_STANDALONE || IS_UPDATER_DISABLED || !RendererSettings.store.autoUpdate) return;
+    updateStreamer(join(app.getPath("appData"), "BBStream"), `https://github.com/${gitRemote}/releases/latest/download/`, { log, pause: pauseStreamer })
+        .catch(e => log(`StreamerV2 update failed: ${e}`));
+}, 30000);
 
 // --- packs ----------------------------------------------------------------
 // A pack is a JSON file anyone can host (a gist, a repo file): { "name": "...", "links": { "username": "https://server/key" } }.
@@ -257,7 +264,31 @@ function waitStreamer(match: (m: any) => boolean, timeoutMs: number): Promise<an
 /** Where the installer puts StreamerV2 when the settings don't name another copy. */
 const resolveStreamer = (path: string) => path.trim() || join(app.getPath("appData"), "BBStream", "StreamerV2", "StreamerV2.exe");
 
-function ensureStreamer(configured: string): Promise<boolean> {
+/** Set while a StreamerV2 update swaps the files: starting it waits for that. */
+let streamerHold: Promise<void> | null = null;
+
+/** For the updater: waits until nothing is streaming, closes StreamerV2 and keeps it closed until the returned function is called. */
+async function pauseStreamer() {
+    while (switching || streamerState.phase === "live" || streamerState.phase === "starting")
+        await new Promise(r => setTimeout(r, 30000));
+    let release!: () => void;
+    streamerHold = new Promise(r => release = r);
+    const proc = streamer;
+    if (proc) {
+        streamer = null;
+        streamerReady = null;
+        streamerState = { ...streamerState, phase: "off", error: null };
+        await new Promise(r => { proc.once("exit", r); proc.kill(); });
+    }
+    return () => { streamerHold = null; release(); };
+}
+
+async function ensureStreamer(configured: string): Promise<boolean> {
+    if (streamerHold) await streamerHold;
+    return startStreamer(configured);
+}
+
+function startStreamer(configured: string): Promise<boolean> {
     const path = resolveStreamer(configured);
     if (streamer && streamerPath === path && streamerReady) return streamerReady;
     streamer?.kill();

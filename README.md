@@ -57,7 +57,7 @@ Os packs da pasta [`packs`](packs) também saem como instaladores próprios em c
 
 ## Atualizações
 
-O BBStream se atualiza sozinho (o Vencord baixa a versão nova e avisa para reiniciar o Discord). Se uma versão nova trouxer um StreamerV2 novo, rode o instalador de novo.
+O BBStream se atualiza sozinho (o Vencord baixa a versão nova e avisa para reiniciar o Discord). O StreamerV2 também: quando sai um novo, o BBStream baixa em segundo plano e troca quando você não estiver transmitindo.
 
 Quando o Discord se atualiza, o BBStream continua instalado.
 
